@@ -1,0 +1,24 @@
+This Docker container is the means by which to integrate custom calico/vpp 
+testcases with the production calico CI test runs.
+
+The custom testcases:
+  * maglev
+  * memif
+  * hoststack/VCL
+  * calico/vpp specific logs and data using "calivppctl export"
+
+Run the container as follows:
+
+sudo docker run -it -v "/tmp":"/root/results" \
+     -v "/home/localadmin/aws":"/root/.aws" \
+     -v "/home/localadmin/ci/ci_kubeconfig":"/root/kubeconfig" \
+     onong/calivppctl:stable
+
+The container needs three params:
+
+  1. .aws folder with the credentials
+	-v "/home/localadmin/aws":"/root/.aws"
+  2. cluster kubeconfig
+	-v "/home/localadmin/ci/ci_kubeconfig":"/root/kubeconfig"
+  3. results dir to output results to
+	-v "/tmp":"/root/results"
