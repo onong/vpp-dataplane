@@ -130,6 +130,7 @@ func (w *PeerWatcher) currentCalicoNode() *oldv3.Node {
 	return &node
 }
 
+// ONONG - this is where it starts.
 // This function watches BGP peers configured in Calico
 // These peers are configured in GoBGP in addition to the other nodes in the cluster
 // They may also control which nodes to pair with if the peerSelector is set
@@ -191,9 +192,11 @@ func (w *PeerWatcher) WatchBGPPeers(t *tomb.Tomb) error {
 	return nil
 }
 
+// ONONG -
 func (w *PeerWatcher) resyncAndCreateWatcher(state map[string]*bgpPeer) error {
 	if w.currentWatchRevision == "" {
 		w.log.Debugf("Reconciliating peers...")
+		// ONONG - getting the BGP peers info from calico
 		peers, err := w.clientv3.BGPPeers().List(context.Background(), options.ListOptions{
 			ResourceVersion: w.currentWatchRevision,
 		})
@@ -238,7 +241,10 @@ func (w *PeerWatcher) resyncAndCreateWatcher(state map[string]*bgpPeer) error {
 					existing.SweepFlag = false
 					if existing.AS != asn {
 						existing.AS = asn
-						err := w.updateBGPPeer(ip, asn)
+						// ONONG - pass the BGPPeer we got from calico or just the password
+						// err := w.updateBGPPeer(ip, asn)
+						err := w.updateBGPPeer(ip, asn, peer.Spec.Password)
+						// err := w.updateBGPPeer(ip, asn, peer.Spec.Password.SecretKeyRef.Key)
 						if err != nil {
 							return errors.Wrap(err, "error updating BGP peer")
 						}
@@ -251,7 +257,10 @@ func (w *PeerWatcher) resyncAndCreateWatcher(state map[string]*bgpPeer) error {
 						AS:        asn,
 						SweepFlag: false,
 					}
-					err := w.addBGPPeer(ip, asn)
+					// ONONG - pass the BGPPeer we got from calico or just the password
+					// err := w.addBGPPeer(ip, asn)
+					err := w.addBGPPeer(ip, asn, peer.Spec.Password)
+					// err := w.addBGPPeer(ip, asn, peer.Spec.Password.SecretKeyRef.Key)
 					if err != nil {
 						return errors.Wrap(err, "error adding BGP peer")
 					}
@@ -262,6 +271,7 @@ func (w *PeerWatcher) resyncAndCreateWatcher(state map[string]*bgpPeer) error {
 		for ip, peer := range state {
 			if peer.SweepFlag {
 				w.log.Infof("peer(del) neighbor ip=%s", ip)
+				// ONONG - change needed to delete a peer???
 				err := w.deleteBGPPeer(ip)
 				if err != nil {
 					return errors.Wrap(err, "error deleting BGP peer")
@@ -290,8 +300,9 @@ func (w *PeerWatcher) cleanExistingWatcher() {
 	}
 }
 
-func (w *PeerWatcher) createBGPPeer(ip string, asn uint32) (*bgpapi.Peer, error) {
-	w.log.Infof("createBGPPeer with ip %s", ip)
+// ONONG
+func (w *PeerWatcher) createBGPPeer(ip string, asn uint32, password *calicov3.BGPPassword) (*bgpapi.Peer, error) {
+	w.log.Infof("createBGPPeer with ip %s (using AUTH=%s)", ip, password != nil)
 	ipAddr, err := net.ResolveIPAddr("ip", ip)
 	if err != nil {
 		return nil, err
@@ -305,6 +316,35 @@ func (w *PeerWatcher) createBGPPeer(ip string, asn uint32) (*bgpapi.Peer, error)
 	if ipAddr.IP.To4() == nil {
 		typ = &common.BgpFamilyUnicastIPv6
 	}
+
+	// ONONG - get the BGP password from calico
+	// Name and Key field values obtained from the BGPPassword schema from muon
+	// Example:
+	// apiVersion: projectcalico.org/v3
+	// kind: BGPPeer
+	// metadata:
+	// name: bgppeer-global-3040
+	// spec:
+	//   peerIP: 192.20.30.40
+	//   asNumber: 64567
+	//   password:
+	//     secretKeyRef:
+	//       name: bgp-secrets
+	//       key: rr-password
+	bgpPassword := ""
+	if password != nil {
+		bgpPassword = password.SecretKeyRef.Key
+	}
+	/*
+		bgp_password := calicov3.BGPPassword {
+			SecretKeyRef: &k8sv1.SecretKeySelector{
+				LocalObjectReference: k8sv1.LocalObjectReference{
+					Name: "bgp-secrets"
+				},
+				Key: "password",
+			}
+		}
+	*/
 
 	afiSafis := []*bgpapi.AfiSafi{
 		{
@@ -341,6 +381,8 @@ func (w *PeerWatcher) createBGPPeer(ip string, asn uint32) (*bgpapi.Peer, error)
 		Conf: &bgpapi.PeerConf{
 			NeighborAddress: ipAddr.String(),
 			PeerAs:          asn,
+			// ONONG - add the password field for gobgp server which ignores if field == ""
+			AuthPassword: bgpPassword,
 		},
 		GracefulRestart: &bgpapi.GracefulRestart{
 			Enabled:             true,
@@ -353,8 +395,8 @@ func (w *PeerWatcher) createBGPPeer(ip string, asn uint32) (*bgpapi.Peer, error)
 	return peer, nil
 }
 
-func (w *PeerWatcher) addBGPPeer(ip string, asn uint32) error {
-	peer, err := w.createBGPPeer(ip, asn)
+func (w *PeerWatcher) addBGPPeer(ip string, asn uint32, password *calicov3.BGPPassword) error {
+	peer, err := w.createBGPPeer(ip, asn, password)
 	if err != nil {
 		return errors.Wrap(err, "cannot add bgp peer")
 	}
@@ -365,8 +407,8 @@ func (w *PeerWatcher) addBGPPeer(ip string, asn uint32) error {
 	return nil
 }
 
-func (w *PeerWatcher) updateBGPPeer(ip string, asn uint32) error {
-	peer, err := w.createBGPPeer(ip, asn)
+func (w *PeerWatcher) updateBGPPeer(ip string, asn uint32, password *calicov3.BGPPassword) error {
+	peer, err := w.createBGPPeer(ip, asn, password)
 	if err != nil {
 		return errors.Wrap(err, "cannot update bgp peer")
 	}
